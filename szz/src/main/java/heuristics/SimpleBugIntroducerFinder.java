@@ -119,6 +119,7 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
    */
   public List<String[]> findBugIntroducingCommits(
       AnnotationMap<String, List<FileAnnotationGraph>> graphs) throws IOException, GitAPIException {
+    // map from fix commit hash to graph
 
     List<String[]> bugIntroducers = new LinkedList<>();
     List<String[]> potentialBugIntroducers = new LinkedList<>();
@@ -126,10 +127,13 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
     Map<String, List<String>> bucketIntroducers = new HashMap<String, List<String>>();
     Map<String, List<String>> bucketIssues = new HashMap<String, List<String>>();
 
+    int counter = 0;
+    int size = graphs.size();
+    System.out.println("GRAPHS");
     for (Map.Entry<String, List<FileAnnotationGraph>> entry : graphs.entrySet()) {
 
       List<FileAnnotationGraph> files = new LinkedList<>();
-      String sCommitString = entry.getKey();
+      String sCommitString = entry.getKey(); // bug fix commit
       files = entry.getValue();
 
       /*
@@ -155,7 +159,9 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
            */
           if (isWithinTimeframe(sCommitString, rev)) {
             bugIntroducers.add(pair);
+            System.out.println("Add (" + pair[0] + ", " + pair[1] + ")");
           } else {
+            System.out.println("Add to bucket (" + sCommitString + ", " + rev + ")");
             if (!bucketIntroducers.containsKey(fileGraph.filePath)) {
               bucketIntroducers.put(fileGraph.filePath, new ArrayList<>());
             }
@@ -168,6 +174,8 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
           }
         }
       }
+      counter += 1;
+      System.out.println("subGraphs done for " + sCommitString + ": " + counter + "/" + size); 
     }
 
     List<String[]> partial_fix_suspects = new LinkedList<>();
@@ -177,6 +185,20 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
      * Now check if any of the potential bugintroducing commits are bugintroducers for any other fix commit, aka weak suspects.
      * This check should be made smarter...
      */
+    System.out.println("BUCKET INTRODUCERS");
+    for (Map.Entry<String, List<String>> entry : bucketIssues.entrySet()) {
+      String file = entry.getKey();
+      List<String> issues = entry.getValue();
+      System.out.println("\n" + file + ":");
+      for (String issue: issues) {
+        System.out.println(issue);
+      }
+    }
+    System.out.println("\n\n\n");
+    
+
+    counter = 0;
+    size = bucketIntroducers.size();
     for (Map.Entry<String, List<String>> entry : bucketIntroducers.entrySet()) {
       List<String> introducers = entry.getValue();
       List<String> issues = bucketIssues.get(entry.getKey());
@@ -191,6 +213,7 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
         
         if (isWithinTimeframe(pair[1], pair[0])) {
           bugIntroducers.add(new String[] {pair[1], pair[0]});
+          System.out.println("Add (" + pair[1] + ", " + pair[0] + ") ");
         } else {
 
           if (!partialIntroducers.containsKey(entry.getKey())) {
@@ -204,11 +227,14 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
           partialIssues.get(entry.getKey()).add(pair[1]);
         }
       }
+      counter += 1;
+      System.out.println("bucketIntroducers done for " + entry.getKey() + ": " + counter + "/" + size);
     }
 
     /*
      * Now check for partial fixes. If a commit is flagged as a fix, it is a candidate to be a partial fix.
      */
+    /* DISABLE
     for (Map.Entry<String, List<String>> suspects : partialIntroducers.entrySet()) {
       List<String> introducers = suspects.getValue();
       List<String> issues = partialIssues.get(suspects.getKey());
@@ -225,6 +251,7 @@ public class SimpleBugIntroducerFinder implements BugIntroducerFinder {
         }
       }
     }
+    */
 
     /*
      * All other pairs that hasn't been flagged as bug introducers are said to be hard suspects.

@@ -45,6 +45,7 @@ import org.json.simple.parser.ParseException;
 import org.slf4j.Logger;
 import util.CommitUtil;
 import util.JSONUtil;
+import org.apache.commons.io.FilenameUtils;
 
 /**
  * A class which is capable to search and build line mapping graphs from a local repository. Uses
@@ -63,6 +64,8 @@ public class GitParser {
 
   private Logger logger;
 
+  private int blame_counter;
+
   private int depth;
 
   /**
@@ -74,6 +77,8 @@ public class GitParser {
    */
   public GitParser(String path, String resultPath, int depth, int customContext)
       throws IOException, GitAPIException {
+    System.out.println("Repo path: " + path);
+
     FileRepositoryBuilder builder = new FileRepositoryBuilder();
     builder.setMustExist(true);
 
@@ -98,6 +103,7 @@ public class GitParser {
     this.util = new CommitUtil(this.repo, customContext);
 
     this.depth = depth;
+    this.blame_counter = 0;
   }
 
   public String getResultPath() {
@@ -198,6 +204,7 @@ public class GitParser {
     command.setFilePath(filePath);
 
     BlameResult found = command.call();
+    this.blame_counter += 1;
     if (found == null) return graph;
 
     Map<RevCommit, Map<Integer, Integer>> foundRevisions = new HashMap<>();
@@ -267,16 +274,62 @@ public class GitParser {
   private AnnotationMap<String, List<FileAnnotationGraph>> buildLineMappingGraph(
       List<Commit> commits) throws IOException, GitAPIException {
 
+    // Only consider source files
+    Set<String> source_code_file_extensions = new HashSet<>(
+      Arrays.asList(
+      ".asm", ".S",
+      ".js", ".jsm", ".sjs",
+      ".c", ".cpp", ".cc", ".cxx", ".h", ".hh", ".hpp", ".hxx",
+      ".mm", ".m",
+      ".java",
+      ".py",
+      ".rs",
+      ".kt",
+      ".html", ".htm", ".xhtml", ".xht", ".xul",
+      ".idl", ".ipdl", ".webidl"
+      ));
+
     AnnotationMap<String, List<FileAnnotationGraph>> fileGraph = new AnnotationMap<>();
+    int i = 0;
+
     for (Commit commit : commits) {
-      List<FileAnnotationGraph> graphs = new LinkedList<>();
+      i += 1;
+      
+      int source_file_counter = 0;
+      int file_counter = 0;
       for (Map.Entry<String, DiffEntry.ChangeType> file : commit.changeTypes.entrySet()) {
+          String fileName = file.getKey();
+          String extension = "." + FilenameUtils.getExtension(fileName);
+          if (source_code_file_extensions.contains(extension)) {
+            source_file_counter += 1;
+          }
+          file_counter += 1;
+
+      };
+      this.logger.info("Commit " + i + ": " + source_file_counter + "/" + file_counter + " files.");
+      // Too many files -> skip
+      if (source_file_counter > 50 || source_file_counter == 0) {
+        this.logger.info("Skipping commit " + i + ".");
+        continue;
+      }
+
+      List<FileAnnotationGraph> graphs = new LinkedList<>();
+      this.logger.info("Building filegraph for commit " + i + " / " + commits.size() + " with " + source_file_counter + " files...");
+      for (Map.Entry<String, DiffEntry.ChangeType> file : commit.changeTypes.entrySet()) {
+        String fileName = file.getKey();
+        String extension = "." + FilenameUtils.getExtension(fileName);
+        // skip files which are not source code files
+        if (!source_code_file_extensions.contains(extension)) {
+          continue;
+        }
+
         FileAnnotationGraph tracedCommits = traceFileChanges(file.getKey(), commit, this.depth);
 
         graphs.add(tracedCommits);
       }
 
       fileGraph.put(commit.getHashString(), graphs);
+      this.logger.info("Built filegraph for commit " + i + " / " + commits.size() + " (" + this.blame_counter + " blame calls).");
     }
 
     return fileGraph;
